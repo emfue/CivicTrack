@@ -1,0 +1,22 @@
+require('dotenv').config();
+const path = require('node:path');
+const express = require('express');
+const helmet = require('helmet');
+const cookieParser = require('cookie-parser');
+const connect = require('./config/database');
+const { asyncRoute } = require('./utils/http');
+const complaints = require('./controllers/complaints');
+const { recover } = require('./services/fileRecovery');
+const app = express();
+app.disable('x-powered-by'); if (process.env.NODE_ENV === 'production') app.set('trust proxy', 1);
+app.use(helmet({ contentSecurityPolicy: { directives: { defaultSrc: ["'self'"], imgSrc: ["'self'", 'blob:', 'data:'], scriptSrc: ["'self'"], styleSrc: ["'self'"], objectSrc: ["'none'"] } } }));
+app.use(express.json({ limit: '20kb' })); app.use(cookieParser());
+app.use('/api', (req, res, next) => { if (!['GET','HEAD','OPTIONS'].includes(req.method)) { const origin = req.get('origin'); if (origin && origin !== process.env.CLIENT_ORIGIN) return res.status(403).json({ error: { message: 'Origin not permitted.' } }); } next(); });
+app.use('/api/v1/auth', require('./routes/auth')); app.get('/api/v1/categories', asyncRoute(complaints.categories)); app.use('/api/v1/complaints', require('./routes/complaints'));
+app.use('/api', (req, res) => res.status(404).json({ error: { message: 'Endpoint not found.' } }));
+app.use(express.static(path.join(__dirname, '../client'), { extensions: ['html'] }));
+app.use((req, res) => res.status(404).sendFile(path.join(__dirname, '../client/pages/404.html')));
+app.use((err, req, res, next) => { const status = err.code === 'LIMIT_FILE_SIZE' ? 413 : err.code && typeof err.code === 'string' && err.code.startsWith('LIMIT_') ? 400 : err.status || (err.name === 'ValidationError' || err.name === 'CastError' ? 400 : 500); if (status >= 500) console.error('Request failed:', err.name || 'Error'); res.status(status).json({ error: { message: status === 500 ? 'An unexpected error occurred.' : err.code === 'LIMIT_FILE_SIZE' ? 'Each image exceeds the size limit.' : err.message } }); });
+async function start() { if (!process.env.MONGODB_URI || !process.env.JWT_SECRET || process.env.JWT_SECRET.length < 32 || process.env.JWT_SECRET === 'replace-with-a-long-random-development-secret' || !process.env.CLIENT_ORIGIN) throw new Error('Set MONGODB_URI, CLIENT_ORIGIN and a unique JWT_SECRET of at least 32 characters in .env.'); await connect(process.env.MONGODB_URI); const hello = await require('mongoose').connection.db.admin().command({ hello: 1 }); if (!hello.setName && hello.msg !== 'isdbgrid') throw new Error('MongoDB must be a replica set or transaction-capable cluster.'); await recover(); const timer = setInterval(() => recover().catch(() => console.error('File recovery failed; it will be retried.')), 15 * 60 * 1000); timer.unref(); const port = Number(process.env.PORT) || 3000, host = process.env.HOST || '127.0.0.1'; app.listen(port, host, () => console.log(`CivicTrack listening on ${host}:${port}`)); }
+if (require.main === module) start().catch(err => { console.error('Startup failed:', err.message); process.exit(1); });
+module.exports = { app, start };

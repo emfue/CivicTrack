@@ -1,0 +1,10 @@
+const router = require('express').Router();
+const rateLimit = require('express-rate-limit');
+const auth = require('../controllers/auth');
+const { requireAuth } = require('../middleware/auth');
+const { asyncRoute } = require('../utils/http');
+const limiter = rateLimit({ windowMs: 15 * 60 * 1000, limit: 30, standardHeaders: 'draft-8', legacyHeaders: false, message: { error: { message: 'Too many attempts. Please try again later.' } } });
+router.use((req, res, next) => { if (['POST', 'PATCH'].includes(req.method) && req.path !== '/logout' && (!req.body || typeof req.body !== 'object' || Array.isArray(req.body))) return res.status(400).json({ error: { message: 'A JSON object is required.' } }); next(); });
+router.post('/register', limiter, asyncRoute(auth.register)); router.post('/login', limiter, asyncRoute(auth.login));
+router.post('/logout', requireAuth, asyncRoute(auth.logout)); router.get('/me', requireAuth, asyncRoute(auth.me)); router.patch('/me', requireAuth, asyncRoute(auth.update)); router.post('/password', requireAuth, limiter, asyncRoute(auth.changePassword));
+module.exports = router;

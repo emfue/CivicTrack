@@ -1,0 +1,12 @@
+const fs = require('node:fs/promises');
+const path = require('node:path');
+const crypto = require('node:crypto');
+const sharp = require('sharp');
+const { fail } = require('../utils/http');
+const root = path.resolve(process.env.UPLOAD_DIR || 'server/uploads');
+const types = { 'image/jpeg': { ext: '.jpg', test: b => b.length > 3 && b[0] === 255 && b[1] === 216 && b[2] === 255 }, 'image/png': { ext: '.png', test: b => b.subarray(0, 8).equals(Buffer.from('89504e470d0a1a0a', 'hex')) }, 'image/webp': { ext: '.webp', test: b => b.toString('ascii', 0, 4) === 'RIFF' && b.toString('ascii', 8, 12) === 'WEBP' } };
+const filePath = key => { if (!/^[a-f0-9]{32}\.(jpg|png|webp)$/.test(key)) throw fail(400, 'Invalid file reference.'); return path.join(root, key); };
+exports.prepare = async file => { const type = types[file.mimetype]; if (!type || !type.test(file.buffer)) throw fail(415, 'Only valid JPEG, PNG and WebP images are allowed.'); let cleaned; try { const image = sharp(file.buffer, { failOn: 'error', limitInputPixels: 20000000 }); const metadata = await image.metadata(); const expected = { 'image/jpeg': 'jpeg', 'image/png': 'png', 'image/webp': 'webp' }[file.mimetype]; if (metadata.format !== expected) throw new Error('Image type mismatch'); cleaned = await image.toFormat(expected).toBuffer(); } catch { throw fail(415, 'The image is invalid or exceeds the allowed dimensions.'); } return { key: crypto.randomBytes(16).toString('hex') + type.ext, contentType: file.mimetype, size: cleaned.length, buffer: cleaned }; };
+exports.upload = async prepared => { await fs.mkdir(root, { recursive: true }); try { await fs.writeFile(filePath(prepared.key), prepared.buffer, { flag: 'wx' }); } catch (err) { if (err.code === 'EEXIST') err.storageCollision = true; throw err; } };
+exports.get = key => filePath(key);
+exports.delete = async key => { try { await fs.unlink(filePath(key)); } catch (err) { if (err.code !== 'ENOENT') throw err; } };

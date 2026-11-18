@@ -1,0 +1,28 @@
+# Dependencies
+node_modules/
+.local-tools/
+
+# Environment and secrets
+.env
+.env.*
+!.env.example
+
+# Runtime output
+logs/
+*.log
+coverage/
+
+# Local complaint photographs
+server/uploads/*
+!server/uploads/.gitkeep
+
+# OS/editor files
+.DS_Store
+Thumbs.db
+.vscode/
+*.swp
+
+# Build/cache output
+dist/
+build/
+.cache/
