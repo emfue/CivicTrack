@@ -23,11 +23,56 @@ jobs:
         with:
           node-version: '24.x'
 
+      - name: Start isolated MongoDB replica set for integration tests
+        shell: bash
+        run: |
+          set -euo pipefail
+          docker run -d --name civictrack-test-mongodb \
+            -p 127.0.0.1:27017:27017 mongo:8.0 \
+            --replSet civictrack-rs --bind_ip_all
+
+          for attempt in {1..60}; do
+            if docker exec civictrack-test-mongodb mongosh --quiet --eval 'quit(db.adminCommand({ ping: 1 }).ok ? 0 : 1)' >/dev/null 2>&1; then
+              break
+            fi
+            if [ "$attempt" -eq 60 ]; then
+              docker logs civictrack-test-mongodb
+              echo "MongoDB did not become ready" >&2
+              exit 1
+            fi
+            sleep 1
+          done
+
+          docker exec civictrack-test-mongodb mongosh --quiet --eval \
+            'rs.initiate({ _id: "civictrack-rs", members: [{ _id: 0, host: "127.0.0.1:27017" }] })'
+
+          for attempt in {1..60}; do
+            if docker exec civictrack-test-mongodb mongosh --quiet --eval 'quit(db.hello().isWritablePrimary ? 0 : 1)' >/dev/null 2>&1; then
+              echo "MongoDB replica set PRIMARY is ready"
+              exit 0
+            fi
+            sleep 1
+          done
+          docker logs civictrack-test-mongodb
+          echo "MongoDB replica set did not elect a PRIMARY" >&2
+          exit 1
+
+      - name: Select browser for integration tests
+        shell: bash
+        run: |
+          set -euo pipefail
+          browser="$(command -v microsoft-edge || command -v google-chrome)"
+          echo "CIVICTRACK_BROWSER_PATH=$browser" >> "$GITHUB_ENV"
+
       - name: npm install, build, and test
         run: |
           npm install
           npm run build --if-present
           npm run test --if-present
+
+      - name: Remove test MongoDB container
+        if: always()
+        run: docker rm -f civictrack-test-mongodb || true
 
       - name: Upload artifact for deployment job
         uses: actions/upload-artifact@v4
@@ -47,7 +92,7 @@ jobs:
         uses: actions/download-artifact@v4
         with:
           name: node-app
-      
+
       - name: Login to Azure
         uses: azure/login@v2
         with:
@@ -62,4 +107,4 @@ jobs:
           app-name: 'civictrack-sachin'
           slot-name: 'Production'
           package: .
-          
+

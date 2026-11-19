@@ -90,7 +90,8 @@ test('citizen workflows and security boundaries', async () => {
     assert.equal((await request('/auth/me',{cookie:oldCookie})).status,401);
     assert.equal((await request('/auth/logout',{method:'POST',cookie})).status,200); assert.equal((await request('/auth/me',{cookie})).status,401);
     assert.equal((await request('/auth/login',{method:'POST',body:{email:a.email,password:'NewPassword123!'}})).status,200);
-    const browser = await require('playwright-core').chromium.launch({ executablePath: 'C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe', headless: true });
+    const browserPath = process.env.CIVICTRACK_BROWSER_PATH || 'C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe';
+    const browser = await require('playwright-core').chromium.launch({ executablePath: browserPath, headless: true });
     try {
       const page = await browser.newPage({ viewport: { width: 1280, height: 900 } });
       await page.goto(`http://localhost:${port}/pages/register.html`);
