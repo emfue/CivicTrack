@@ -74,11 +74,30 @@ jobs:
         if: always()
         run: docker rm -f civictrack-test-mongodb || true
 
+      - name: Prepare and verify deployment ZIP
+        shell: bash
+        run: |
+          set -euo pipefail
+          stage="$(mktemp -d "$RUNNER_TEMP/civictrack-package.XXXXXX")"
+          cp package.json package-lock.json "$stage/"
+          cp -R client server "$stage/"
+          # Dependencies are installed on Linux with the same Node major as App Service.
+          npm ci --omit=dev --prefix "$stage"
+          (cd "$stage" && node -e "require('express'); require('mongoose'); require('bcrypt'); require('sharp')")
+          (cd "$stage" && zip -qr "$RUNNER_TEMP/civictrack-app.zip" .)
+          unzip -tq "$RUNNER_TEMP/civictrack-app.zip"
+          unzip -Z -1 "$RUNNER_TEMP/civictrack-app.zip" > "$RUNNER_TEMP/civictrack-zip-contents.txt"
+          for entry in package.json package-lock.json client/index.html server/server.js node_modules/express/package.json node_modules/mongoose/package.json; do
+            grep -Fx "$entry" "$RUNNER_TEMP/civictrack-zip-contents.txt" >/dev/null || { echo "Missing from ZIP: $entry" >&2; exit 1; }
+          done
+          echo "Verified application files and production dependencies at ZIP root."
+
       - name: Upload artifact for deployment job
         uses: actions/upload-artifact@v4
         with:
           name: node-app
-          path: .
+          path: ${{ runner.temp }}/civictrack-app.zip
+          if-no-files-found: error
 
   deploy:
     runs-on: ubuntu-latest
@@ -92,6 +111,20 @@ jobs:
         uses: actions/download-artifact@v4
         with:
           name: node-app
+          path: ./deployment
+
+      - name: Verify downloaded deployment ZIP
+        shell: bash
+        run: |
+          set -euo pipefail
+          archive=./deployment/civictrack-app.zip
+          test -f "$archive"
+          unzip -tq "$archive"
+          unzip -Z -1 "$archive" > "$RUNNER_TEMP/civictrack-zip-contents.txt"
+          for entry in package.json package-lock.json client/index.html server/server.js node_modules/express/package.json node_modules/mongoose/package.json; do
+            grep -Fx "$entry" "$RUNNER_TEMP/civictrack-zip-contents.txt" >/dev/null || { echo "Missing from downloaded ZIP: $entry" >&2; exit 1; }
+          done
+          echo "Deployment ZIP verified."
 
       - name: Login to Azure
         uses: azure/login@v2
@@ -106,5 +139,5 @@ jobs:
         with:
           app-name: 'civictrack-sachin'
           slot-name: 'Production'
-          package: .
+          package: ./deployment/civictrack-app.zip
 
